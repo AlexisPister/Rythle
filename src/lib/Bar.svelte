@@ -1,6 +1,21 @@
+<script lang="ts" module>
+	/** Width of the timed part of a bar (16 equal slots), in SVG units. */
+	export const BAR_W = 300;
+	export const BAR_H = 110;
+	/** Extra (untimed) room for the time signature and the final barline. */
+	const TS_W = 30;
+	const END_W = 10;
+
+	export function barWidth(first: boolean, last: boolean): number {
+		return BAR_W + (first ? TS_W : 0) + (last ? END_W : 0);
+	}
+</script>
+
 <script lang="ts">
 	// One bar of single-line percussion notation, rendered as SVG.
-	// Horizontal spacing is proportional to time so taps and the playhead line up with notes.
+	// Horizontal spacing is proportional to time, at the same rate in every bar, so taps and
+	// the playhead line up with notes and the playhead moves continuously across barlines.
+	// Each 16th slot is centered in its cell: the barline sits half a slot before the first note.
 	import { BEATS_PER_BAR, SLOTS_PER_BAR, SUBDIV, type Note } from './rhythm';
 	import type { Status, TapMark } from './scoring';
 
@@ -18,8 +33,8 @@
 	let { notes, first = false, last = false, statuses = [], taps = [], playhead = null }: Props =
 		$props();
 
-	const W = 300;
-	const H = 110;
+	const W = BAR_W;
+	const H = BAR_H;
 	const Y = 62; // staff line
 	/** glyph scale (noteheads, stems, beams, rests); limited by 16th-note spacing */
 	const S = 1.2;
@@ -27,10 +42,11 @@
 	const STEM_TOP = Y - 36 * S;
 	const BEAM_H = 4.5 * S;
 	const BEAM_GAP = 7 * S;
-	const padL = $derived(first ? 40 : 14);
-	const padR = 10;
+	const U = W / SLOTS_PER_BAR;
+	const offL = $derived(first ? TS_W : 0);
+	const VW = $derived(barWidth(first, last));
 
-	const xAt = (pos: number) => padL + (pos / SLOTS_PER_BAR) * (W - padL - padR);
+	const xAt = (pos: number) => offL + (pos + 0.5) * U;
 
 	const COLORS: Record<string, string> = {
 		perfect: 'var(--perfect)',
@@ -77,24 +93,24 @@
 	});
 </script>
 
-<svg viewBox="0 0 {W} {H}" role="img" aria-label="bar">
+<svg viewBox="0 0 {VW} {H}" role="img" aria-label="bar">
 	<!-- staff line and bar lines -->
-	<line x1="0" x2={W} y1={Y} y2={Y} class="staff" />
+	<line x1="0" x2={VW} y1={Y} y2={Y} class="staff" />
 	{#if first}
 		<line x1="1" x2="1" y1={Y - 18} y2={Y + 18} class="barline" />
-		<text x="20" y={Y - 3} class="timesig">4</text>
-		<text x="20" y={Y + 19} class="timesig">4</text>
+		<text x={TS_W / 2 + 2} y={Y - 3} class="timesig">4</text>
+		<text x={TS_W / 2 + 2} y={Y + 19} class="timesig">4</text>
 	{/if}
 	{#if last}
-		<line x1={W - 6} x2={W - 6} y1={Y - 18} y2={Y + 18} class="barline" />
-		<line x1={W - 2} x2={W - 2} y1={Y - 18} y2={Y + 18} class="barline" stroke-width="4" />
+		<line x1={VW - 6} x2={VW - 6} y1={Y - 18} y2={Y + 18} class="barline" />
+		<line x1={VW - 2} x2={VW - 2} y1={Y - 18} y2={Y + 18} class="barline" stroke-width="4" />
 	{:else}
-		<line x1={W - 0.5} x2={W - 0.5} y1={Y - 18} y2={Y + 18} class="barline" />
+		<line x1={VW - 0.5} x2={VW - 0.5} y1={Y - 18} y2={Y + 18} class="barline" />
 	{/if}
 
 	<!-- beat guides -->
 	{#each [1, 2, 3] as b (b)}
-		<line x1={xAt(b * SUBDIV) - 4} x2={xAt(b * SUBDIV) - 4} y1={Y + 22} y2={Y + 26} class="guide" />
+		<line x1={xAt(b * SUBDIV - 0.5)} x2={xAt(b * SUBDIV - 0.5)} y1={Y + 22} y2={Y + 26} class="guide" />
 	{/each}
 
 	{#each notes as n (n.start)}

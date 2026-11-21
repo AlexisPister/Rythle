@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import Bar from '#lib/Bar.svelte';
+	import Bar, { barWidth, BAR_H } from '#lib/Bar.svelte';
 	import {
 		N_BARS,
 		NB_ATTEMPTS,
@@ -49,16 +49,28 @@
 			: (last?.taps ?? [])
 	);
 
+	// Bar widths (first/last bars have extra room) → grid columns and overall aspect ratio.
+	const widths = rhythm.bars.map((_, i) => barWidth(i === 0, i === rhythm.bars.length - 1));
+	const lineStyle = `grid-template-columns: ${widths.map((w) => `minmax(0, ${w}fr)`).join(' ')}; --aspect: ${widths.reduce((a, b) => a + b, 0) / BAR_H}`;
+
+	// A bar's timed area covers local positions [-0.5, 15.5) (slots are centered in their cells);
+	// the first and last bars also own anything before / after the rhythm.
+	function inBar(bar: number, p: number, extra = 0): boolean {
+		const lo = bar === 0 ? -0.5 - extra : -0.5;
+		const hi = bar === rhythm.bars.length - 1 ? SLOTS_PER_BAR + 0.5 + extra : SLOTS_PER_BAR - 0.5;
+		return p >= lo && p < hi;
+	}
+
 	function tapsForBar(bar: number): TapMark[] {
 		return shownTaps
 			.map((t) => ({ ...t, pos: t.pos - bar * SLOTS_PER_BAR }))
-			.filter((t) => t.pos >= -1 && t.pos < SLOTS_PER_BAR);
+			.filter((t) => inBar(bar, t.pos, 0.5));
 	}
 
 	function playheadForBar(bar: number): number | null {
 		if (playPos === null) return null;
 		const p = playPos - bar * SLOTS_PER_BAR;
-		return p >= 0 && p < SLOTS_PER_BAR ? p : null;
+		return inBar(bar, p) ? p : null;
 	}
 
 	onMount(() => {
@@ -201,7 +213,7 @@
 	</header>
 
 	<section class="sheet">
-		<div class="line" style="--bars: {N_BARS}">
+		<div class="line" style={lineStyle}>
 		{#each rhythm.bars as notes, i (i)}
 			<Bar
 				{notes}
@@ -351,8 +363,8 @@
 	/* All bars on one line, as large as the sheet allows (bar SVG aspect is 300x110). */
 	.line {
 		display: grid;
-		grid-template-columns: repeat(var(--bars), minmax(0, 1fr));
-		width: min(100cqw, 100cqh * var(--bars) * 300 / 110);
+		/* columns are set inline, proportional to each bar's width */
+		width: min(100cqw, 100cqh * var(--aspect));
 	}
 	.pad {
 		width: 220px;
