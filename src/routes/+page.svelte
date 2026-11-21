@@ -241,7 +241,7 @@
 	<p class="hint">
 		{#if phase === 'idle'}
 			Press <kbd>Space</kbd> or the pad.
-			{demoPlayed ? 'After the countdown, tap each note.' : 'Listen to the rhythm once, then after the countdown tap each note.'}
+			{demoPlayed ? 'After the countdown, tap each note (press any key or click the button).' : 'Listen to the rhythm once, then after the countdown tap each note (press any key or click the button).'}
 		{:else if phase === 'demo'}
 			Listen to the rhythm · <kbd>Esc</kbd> to cancel
 		{:else}
