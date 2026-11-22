@@ -4,6 +4,10 @@ export type Status = 'perfect' | 'good' | 'miss';
 
 export const PERFECT_SEC = 0.045;
 export const GOOD_SEC = 0.1;
+/** points for a "close" note (a perfect note is worth 1) */
+export const GOOD_WEIGHT = 0.6;
+/** percentage points removed per extra tap */
+export const EXTRA_PENALTY = 5;
 
 export interface TapMark {
 	/** position in 16ths from the first downbeat */
@@ -52,7 +56,8 @@ export function scoreAttempt(rhythm: Rhythm, tapTimes: number[]): Attempt {
 	const extras = tapUsed.filter((u) => u === null).length;
 	const perfect = statuses.filter((s) => s === 'perfect').length;
 	const good = statuses.filter((s) => s === 'good').length;
-	const raw = (100 * (perfect + 0.6 * good)) / Math.max(1, onsets.length) - 5 * extras;
+	const raw =
+		(100 * (perfect + GOOD_WEIGHT * good)) / Math.max(1, onsets.length) - EXTRA_PENALTY * extras;
 
 	return {
 		statuses,

@@ -10,7 +10,16 @@
 		todayKey,
 		puzzleNumber
 	} from '#lib/rhythm.ts';
-	import { scoreAttempt, emojiRow, type Attempt, type TapMark } from '#lib/scoring.ts';
+	import {
+		scoreAttempt,
+		emojiRow,
+		PERFECT_SEC,
+		GOOD_SEC,
+		GOOD_WEIGHT,
+		EXTRA_PENALTY,
+		type Attempt,
+		type TapMark
+	} from '#lib/scoring.ts';
 	import * as audio from '#lib/audio.ts';
 
 	const MAX_ATTEMPTS = NB_ATTEMPTS;
@@ -34,6 +43,7 @@
 	let demoStart = 0; // audio time of the demo's first downbeat
 	let t0 = 0; // audio time of the user's first downbeat
 	let withDemo = false;
+	let listenOnly = false; // replaying the rhythm after the game is over
 	let latency = 0;
 	let raf = 0;
 	let scheduled: audio.Stopper[] = [];
@@ -90,13 +100,15 @@
 		localStorage.setItem('rythle:settings', JSON.stringify({ metronome, offsetMs }));
 	});
 
-	async function start() {
+	/** @param listenFirst play the rhythm before the countdown (always done the first time) */
+	async function start(listenFirst = false) {
 		if (over || phase !== 'idle') return;
 		const ctx = audio.getCtx();
 		await ctx.resume();
 		latency = audio.outputLatency() + offsetMs / 1000;
 		// Timeline: [demo, first time only] → 4-beat "your turn" count-in → user plays.
-		withDemo = !demoPlayed;
+		withDemo = !demoPlayed || listenFirst;
+		listenOnly = false;
 		demoStart = ctx.currentTime + 0.2;
 		const countinStart = withDemo ? demoStart + totalSec : demoStart;
 		t0 = countinStart + BEATS_PER_BAR * beatSec;
@@ -121,6 +133,10 @@
 		const now = audio.getCtx().currentTime - latency;
 		const rel = now - t0;
 		const demoRel = now - demoStart;
+		if (listenOnly && demoRel >= totalSec) {
+			cancelAnimationFrame(raf);
+			return reset();
+		}
 		if (withDemo && demoRel < totalSec) {
 			phase = 'demo';
 			playPos = Math.max(0, demoRel / slotSec);
@@ -179,25 +195,37 @@
 			if (e.code !== 'Space' || phase === 'idle') return;
 		}
 		if (e.key === 'Escape') return cancel();
+		if (phase === 'idle' && attempts.length && e.key.toLowerCase() === 'l') return void start(true);
 		if (e.code === 'Space' || e.key.length === 1) {
 			e.preventDefault();
 			tap();
 		}
 	}
 
-	function listen() {
+	/** Replay the rhythm (after the game is over), with the playhead; can't overlap itself. */
+	async function listen() {
+		if (phase !== 'idle') return;
 		const ctx = audio.getCtx();
-		ctx.resume();
-		const begin = ctx.currentTime + 0.2;
+		await ctx.resume();
+		latency = audio.outputLatency() + offsetMs / 1000;
+		withDemo = true;
+		listenOnly = true;
+		demoStart = ctx.currentTime + 0.2;
+		t0 = demoStart + totalSec;
+		scheduled = [];
 		for (let b = 0; b < N_BARS * BEATS_PER_BAR; b++)
-			audio.click(begin + b * beatSec, b % BEATS_PER_BAR === 0, 0.4);
-		rhythm.onsets.forEach((o) => audio.noteSound(begin + o));
+			scheduled.push(audio.click(demoStart + b * beatSec, b % BEATS_PER_BAR === 0, 0.4));
+		for (const o of rhythm.onsets) scheduled.push(audio.noteSound(demoStart + o));
+		phase = 'demo';
+		raf = requestAnimationFrame(tick);
 	}
 
 	async function share() {
-		const tries = solved ? attempts.length : over ? 'X' : `${attempts.length}…`;
-		const head = `Rythle #${number} · ${tries}/${MAX_ATTEMPTS} · ♩=${bpm} · best ${best}%`;
-		const text = [head, ...attempts.map((a) => emojiRow(a, rhythm))].join('\n');
+		// Only the best attempt is shared (a solved one wins), plus how many attempts were used.
+		const rank = (a: Attempt) => (a.solved ? 1000 : 0) + a.score;
+		const top = attempts.reduce((b, a) => (rank(a) > rank(b) ? a : b));
+		const head = `Rythle #${number} · ♩=${bpm} · ${top.score}% · ${attempts.length}/${MAX_ATTEMPTS} attempts`;
+		const text = `${head}\n${emojiRow(top, rhythm)}`;
 		await navigator.clipboard.writeText(text);
 		copied = true;
 		setTimeout(() => (copied = false), 1500);
@@ -227,6 +255,30 @@
 		</div>
 	</section>
 
+	{#if phase === 'idle' && attempts.length && !over}
+		<div class="retry">
+			<button
+				class="pad"
+				onpointerdown={(e) => {
+					e.preventDefault();
+					start(true);
+				}}
+			>
+				Listen &amp; try again
+				<small>attempt {attempts.length + 1} / {MAX_ATTEMPTS} · <kbd>L</kbd></small>
+			</button>
+			<button
+				class="pad"
+				onpointerdown={(e) => {
+					e.preventDefault();
+					start();
+				}}
+			>
+				Try again
+				<small>attempt {attempts.length + 1} / {MAX_ATTEMPTS} · <kbd>Space</kbd></small>
+			</button>
+		</div>
+	{:else}
 	<button
 		class="pad"
 		class:active={phase !== 'idle'}
@@ -246,14 +298,22 @@
 		{:else if over}
 			{solved ? 'Solved!' : 'Out of attempts'}
 		{:else}
-			{attempts.length ? 'Try Again?' : 'Start'}
-			<small>attempt {attempts.length + 1} / {MAX_ATTEMPTS}</small>
+			Start
+			<small>attempt 1 / {MAX_ATTEMPTS}</small>
 		{/if}
 	</button>
+	{/if}
 	<p class="hint">
 		{#if phase === 'idle'}
-			Press <kbd>Space</kbd> or the pad.
-			{demoPlayed ? 'After the countdown, tap each note (press any key or click the button).' : 'Listen to the rhythm once, then after the countdown tap each note (press any key or click the button).'}
+			{#if over}
+				Come back tomorrow for a new rhythm.
+			{:else if attempts.length}
+				Hear the rhythm again first, or go straight to the countdown. Then tap each note (press any
+				key or click the button).
+			{:else}
+				Press <kbd>Space</kbd> or the pad. Listen to the rhythm once, then after the countdown tap
+				each note (press any key or click the button).
+			{/if}
 		{:else if phase === 'demo'}
 			Listen to the rhythm · <kbd>Esc</kbd> to cancel
 		{:else}
@@ -264,6 +324,18 @@
 	{#if last && phase === 'idle'}
 		<section class="result">
 			<span class="score">{last.score}%</span>
+			<button type="button" class="help" aria-label="How the score is computed">
+				?
+				<span class="tooltip">
+					Each note is worth <b>1 point</b> if tapped within ±{PERFECT_SEC * 1000} ms
+					<span class="perfect">(perfect)</span>, <b>{GOOD_WEIGHT} points</b> within ±{GOOD_SEC *
+						1000} ms <span class="good">(close)</span>, and 0 if missed.<br />
+					Score = points ÷ number of notes × 100, minus <b>{EXTRA_PENALTY}%</b> per extra tap (never
+					below 0).<br />
+					The puzzle is solved when every note is hit with no extra taps.
+				</span>
+			</button>
+			{#if attempts.length > 1}<span class="best">best {best}%</span>{/if}
 			<span class="perfect">● {last.statuses.filter((st) => st === 'perfect').length} perfect</span>
 			<span class="good">● {last.statuses.filter((st) => st === 'good').length} close</span>
 			<span class="miss">● {last.statuses.filter((st) => st === 'miss').length} missed</span>
@@ -280,11 +352,13 @@
 	{/if}
 
 	<div class="actions">
-		{#if attempts.length && phase === 'idle'}
-			<button onclick={share}>{copied ? 'Copied!' : 'Share'}</button>
+		{#if attempts.length}
+			<button onclick={share} disabled={phase !== 'idle'}>{copied ? 'Copied!' : 'Share'}</button>
 		{/if}
-		{#if over && phase === 'idle'}
-			<button onclick={listen}>Listen</button>
+		{#if over}
+			<button onclick={listen} disabled={phase !== 'idle'}>
+				{phase === 'demo' ? 'Listening…' : 'Listen'}
+			</button>
 		{/if}
 		<button onclick={() => settingsDialog.showModal()} disabled={phase !== 'idle'}>Settings</button>
 	</div>
@@ -366,6 +440,13 @@
 		/* columns are set inline, proportional to each bar's width */
 		width: min(100cqw, 100cqh * var(--aspect));
 	}
+	.retry {
+		display: flex;
+		gap: 1rem;
+	}
+	.retry .pad {
+		width: min(220px, 44vw);
+	}
 	.pad {
 		width: 220px;
 		height: clamp(64px, 14vh, 120px);
@@ -425,6 +506,47 @@
 	.score {
 		font-size: 1.8rem;
 		font-weight: 700;
+	}
+	.best {
+		color: var(--ink-soft);
+	}
+	.help {
+		position: relative;
+		align-self: center;
+		width: 1.3rem;
+		height: 1.3rem;
+		border-radius: 50%;
+		border: 1px solid var(--ink-soft);
+		color: var(--ink-soft);
+		font-size: 0.8rem;
+		font-weight: 700;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		cursor: help;
+		background: none;
+		padding: 0;
+	}
+	.tooltip {
+		display: none;
+		position: absolute;
+		bottom: calc(100% + 8px);
+		left: 50%;
+		transform: translateX(-50%);
+		width: 280px;
+		padding: 0.6rem 0.8rem;
+		background: var(--ink);
+		color: white;
+		border-radius: 8px;
+		font-size: 0.8rem;
+		font-weight: 400;
+		line-height: 1.45;
+		text-align: left;
+		z-index: 10;
+	}
+	.help:hover .tooltip,
+	.help:focus .tooltip {
+		display: block;
 	}
 	.perfect {
 		color: var(--perfect);
